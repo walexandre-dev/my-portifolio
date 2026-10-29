@@ -13,6 +13,7 @@ import {
   ContactPayload,
   validateContactPayload,
   buildWhatsAppLink,
+  buildMailtoLink,
 } from '../utils/portfolioLogic';
 
 interface ContactAndFooterSectionProps {
@@ -25,8 +26,14 @@ interface SubmissionReceipt {
   createdAt: string;
   message: string;
   name: string;
+  email: string;
   serviceType: string;
+  description: string;
+  deliveryMode: 'server' | 'static-pages';
 }
+
+const envFormspreeEndpoint =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FORMSPREE_ENDPOINT) || '';
 
 export const ContactAndFooterSection: React.FC<ContactAndFooterSectionProps> = ({
   preselectedService,
@@ -68,6 +75,39 @@ export const ContactAndFooterSection: React.FC<ContactAndFooterSectionProps> = (
     }
   };
 
+  const saveStaticFallbackSubmission = (sanitized: ContactPayload) => {
+    const randomSuffix = Math.floor(100000 + Math.random() * 900000);
+    const protocol = `PAG-${new Date().getFullYear()}-${randomSuffix}`;
+    const createdAt = new Date().toISOString();
+
+    try {
+      const existingRaw = localStorage.getItem('portfolio_contact_requests');
+      const existing = existingRaw ? JSON.parse(existingRaw) : [];
+      if (Array.isArray(existing)) {
+        existing.unshift({ protocol, ...sanitized, createdAt });
+        localStorage.setItem(
+          'portfolio_contact_requests',
+          JSON.stringify(existing.slice(0, 50))
+        );
+      }
+    } catch {
+      // Ignore storage quota errors
+    }
+
+    setReceipt({
+      protocol,
+      createdAt,
+      message:
+        'Dados validados e formatados com sucesso. Como esta página está em hospedagem estática (GitHub Pages), conclua o envio direto com um clique via WhatsApp ou E-mail abaixo.',
+      name: sanitized.name,
+      email: sanitized.email,
+      serviceType: sanitized.serviceType,
+      description: sanitized.description,
+      deliveryMode: 'static-pages',
+    });
+    setErrors({});
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setServerError(null);
@@ -80,21 +120,59 @@ export const ContactAndFooterSection: React.FC<ContactAndFooterSectionProps> = (
 
     setSubmitting(true);
     try {
-      const response = await fetch('/api/contact', {
+      // 1. If an external Formspree / Serverless endpoint is configured for GitHub Pages
+      if (envFormspreeEndpoint && /^https?:\/\//i.test(envFormspreeEndpoint)) {
+        const extRes = await fetch(envFormspreeEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(validation.sanitized),
+        });
+        if (extRes.ok) {
+          const protocol = `EXT-${new Date().getFullYear()}-${Math.floor(
+            100000 + Math.random() * 900000
+          )}`;
+          setReceipt({
+            protocol,
+            createdAt: new Date().toISOString(),
+            message:
+              'Solicitação enviada com sucesso através do serviço de formulários. Você também pode iniciar conversa imediata pelo WhatsApp.',
+            ...validation.sanitized,
+            deliveryMode: 'server',
+          });
+          setErrors({});
+          return;
+        }
+      }
+
+      // 2. Try the integrated Express backend (/api/contact)
+      const response = await fetch('./api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validation.sanitized),
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        // Running on static GitHub Pages where ./api/contact is not a Node server
+        saveStaticFallbackSubmission(validation.sanitized);
+        return;
+      }
+
       const data = await response.json();
       if (!response.ok || !data.ok) {
+        if (response.status === 404 || response.status === 405) {
+          saveStaticFallbackSubmission(validation.sanitized);
+          return;
+        }
         if (data.errors) {
           setErrors(data.errors);
         }
         setServerError(
           data.message || 'Não foi possível registrar sua solicitação no momento.'
         );
-        setSubmitting(false);
         return;
       }
 
@@ -103,23 +181,39 @@ export const ContactAndFooterSection: React.FC<ContactAndFooterSectionProps> = (
         createdAt: data.createdAt,
         message: data.message,
         name: validation.sanitized.name,
+        email: validation.sanitized.email,
         serviceType: validation.sanitized.serviceType,
+        description: validation.sanitized.description,
+        deliveryMode: 'server',
       });
       setErrors({});
     } catch {
-      setServerError(
-        'Erro de conexão ao comunicar com o servidor. Verifique sua rede ou utilize o contato direto via WhatsApp/E-mail.'
-      );
+      // Network error or static file environment without backend route -> use static fallback
+      saveStaticFallbackSubmission(validation.sanitized);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const activeName = receipt ? receipt.name : formData.name;
+  const activeEmail = receipt ? receipt.email : formData.email;
+  const activeService = receipt ? receipt.serviceType : formData.serviceType;
+  const activeDescription = receipt ? receipt.description : formData.description;
+
   const whatsappDirectHref = buildWhatsAppLink({
     phone: PROFILE_DATA.whatsappNumber,
-    name: formData.name,
-    serviceType: formData.serviceType,
-    description: formData.description,
+    name: activeName,
+    serviceType: activeService,
+    description: activeDescription,
+  });
+
+  const mailtoDirectHref = buildMailtoLink({
+    recipientEmail: PROFILE_DATA.email,
+    name: activeName,
+    senderEmail: activeEmail,
+    serviceType: activeService,
+    description: activeDescription,
+    protocol: receipt?.protocol,
   });
 
   const currentYear = new Date().getFullYear();
@@ -173,7 +267,7 @@ export const ContactAndFooterSection: React.FC<ContactAndFooterSectionProps> = (
                 </a>
 
                 <a
-                  href={`mailto:${PROFILE_DATA.email}`}
+                  href={mailtoDirectHref}
                   className="flex items-center justify-between rounded-xl border border-slate-800 bg-[#07090e] p-4 transition-colors hover:border-cyan-500/60"
                 >
                   <div className="flex items-center gap-3.5">
@@ -210,7 +304,7 @@ export const ContactAndFooterSection: React.FC<ContactAndFooterSectionProps> = (
               </div>
             </div>
 
-            {/* Right Column: Validated Contact Form Connected to Express Backend */}
+            {/* Right Column: Validated Contact Form Connected to Express Backend / Static Pages Fallback */}
             <div className="lg:col-span-7">
               <div className="rounded-2xl border border-slate-800 bg-[#07090e] p-6 sm:p-8">
                 {receipt ? (
@@ -221,7 +315,9 @@ export const ContactAndFooterSection: React.FC<ContactAndFooterSectionProps> = (
                     <div className="flex items-center gap-3 text-cyan-400">
                       <CheckCircle2 className="h-6 w-6 shrink-0" />
                       <h3 className="font-display text-xl font-bold text-white">
-                        Solicitação Registrada com Sucesso
+                        {receipt.deliveryMode === 'server'
+                          ? 'Solicitação Registrada com Sucesso'
+                          : 'Solicitação Validada e Pronta para Envio'}
                       </h3>
                     </div>
 
@@ -248,7 +344,15 @@ export const ContactAndFooterSection: React.FC<ContactAndFooterSectionProps> = (
                         className="inline-flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2.5 text-xs font-semibold text-slate-950 transition-colors hover:bg-cyan-400 whitespace-nowrap shrink-0"
                       >
                         <MessageSquare className="h-4 w-4" />
-                        <span>Enviar também via WhatsApp</span>
+                        <span>Enviar via WhatsApp</span>
+                      </a>
+
+                      <a
+                        href={mailtoDirectHref}
+                        className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2.5 text-xs font-semibold text-cyan-300 transition-colors hover:bg-cyan-500 hover:text-slate-950 whitespace-nowrap shrink-0"
+                      >
+                        <Mail className="h-4 w-4" />
+                        <span>Enviar via E-mail</span>
                       </a>
 
                       <button

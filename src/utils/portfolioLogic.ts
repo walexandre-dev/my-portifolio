@@ -164,6 +164,37 @@ export function buildWhatsAppLink(params: {
   return `https://api.whatsapp.com/send?text=${encoded}`;
 }
 
+export function buildMailtoLink(params: {
+  recipientEmail: string;
+  name?: string;
+  senderEmail?: string;
+  serviceType?: string;
+  description?: string;
+  protocol?: string;
+}): string {
+  const to = (params.recipientEmail || '').trim();
+  const subjectParts = ['Solicitação Técnica'];
+  if (params.serviceType) subjectParts.push(params.serviceType.trim());
+  if (params.protocol) subjectParts.push(`[${params.protocol.trim()}]`);
+
+  const bodyLines = [
+    `Olá Alex,`,
+    ``,
+    `Gostaria de solicitar atendimento técnico com os seguintes dados:`,
+    `- Nome/Empresa: ${params.name?.trim() || 'Não informado'}`,
+    `- E-mail de retorno: ${params.senderEmail?.trim() || 'Não informado'}`,
+    `- Tipo de serviço: ${params.serviceType?.trim() || 'Consultoria Técnica'}`,
+    params.protocol ? `- Protocolo de referência: ${params.protocol.trim()}` : '',
+    ``,
+    `Descrição da necessidade:`,
+    params.description?.trim() || 'Gostaria de agendar uma avaliação técnica.',
+  ].filter(Boolean);
+
+  const subject = encodeURIComponent(subjectParts.join(' — '));
+  const body = encodeURIComponent(bodyLines.join('\n'));
+  return `mailto:${to}?subject=${subject}&body=${body}`;
+}
+
 export function computeCardTilt(
   normX: number,
   normY: number,

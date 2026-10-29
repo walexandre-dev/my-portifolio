@@ -6,6 +6,7 @@ import {
   filterProjectsByCategory,
   filterSkills,
   buildWhatsAppLink,
+  buildMailtoLink,
   computeCardTilt,
   computeParallaxOffset,
 } from './portfolioLogic';
@@ -92,3 +93,18 @@ test('computeCardTilt and computeParallaxOffset respect movement bounds', () => 
   assert.equal(computeParallaxOffset(1000, 0.5, 180), 180);
   assert.equal(computeParallaxOffset(200, 0.25, 180), 50);
 });
+
+test('buildMailtoLink encodes recipient, subject, and body for static hosting', () => {
+  const mailto = buildMailtoLink({
+    recipientEmail: 'alexsampaio2003@gmail.com',
+    name: 'Mariana Costa',
+    senderEmail: 'mariana@empresa.com',
+    serviceType: 'Desenvolvimento de Sistemas',
+    description: 'Precisamos de um painel web em React e Flask.',
+    protocol: 'PAG-2026-101',
+  });
+  assert.ok(mailto.startsWith('mailto:alexsampaio2003@gmail.com?subject='));
+  assert.ok(decodeURIComponent(mailto).includes('Mariana Costa'));
+  assert.ok(decodeURIComponent(mailto).includes('PAG-2026-101'));
+});
+
